@@ -2,12 +2,12 @@ import sys
 import os
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
                             QHBoxLayout, QWidget, QFileDialog, QLabel, QSplitter,
-                            QFrame, QTextEdit, QScrollArea)
+                            QFrame, QTextEdit, QScrollArea, QMessageBox)
 from PyQt5.QtGui import QPixmap, QImage, QFont, QIcon
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 import fitz  # PyMuPDF
-from PDF_OCR import ocr_pdf  
+from PDF_OCR import ocr_pdf, find_ghostscript
 from PDF_AI_Summarise import generate_pdf_summary
 from PDF_AI_Question import generate_pdf_question
 
@@ -243,8 +243,28 @@ class PDFToolGUI(QMainWindow):
             self.ai_output.setText("Error: No PDF selected")
             return
             
+        # Check for ghostscript before continuing
+        if not find_ghostscript():
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Warning)
+            msg.setWindowTitle("Ghostscript Not Found")
+            msg.setText("Ghostscript is required for OCR but was not found.")
+            msg.setInformativeText(
+                "To make this application portable:\n\n"
+                "1. Download Ghostscript from https://ghostscript.com/releases/gsdnld.html\n"
+                "2. Extract it to a folder named 'ghostscript' in the same directory as this application\n\n"
+                "The folder structure should be:\n"
+                "/YourAppFolder\n"
+                "  - /ghostscript\n"
+                "     - /bin\n"
+                "        - gswin64c.exe (Windows) or gs (Linux/Mac)"
+            )
+            msg.setStandardButtons(QMessageBox.Ok)
+            msg.exec_()
+            self.ai_output.setText("OCR failed: Ghostscript not found. See instructions for making this application portable.")
+            return
+            
         # Ask user if they want to save to downloads or temp
-        from PyQt5.QtWidgets import QMessageBox
         msg_box = QMessageBox()
         msg_box.setWindowTitle("Save Location")
         msg_box.setText("Where would you like to save the OCR'd PDF?")
@@ -264,6 +284,15 @@ class PDFToolGUI(QMainWindow):
             input_filename = os.path.basename(self.pdf_path)
             base_name = os.path.splitext(input_filename)[0]
             output_path = os.path.join(downloads_path, f"{base_name}_ocr.pdf")
+        elif msg_box.clickedButton() == temp_button:
+            # Create temp folder if it doesn't exist
+            temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Temp")
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Set output path in temp folder
+            input_filename = os.path.basename(self.pdf_path)
+            base_name = os.path.splitext(input_filename)[0]
+            output_path = os.path.join(temp_dir, f"{base_name}_ocr.pdf")
         
         # Show processing message
         self.ai_output.setText("Processing OCR... This may take a while.")
@@ -280,7 +309,7 @@ class PDFToolGUI(QMainWindow):
                 self.ai_output.setText("OCR completed successfully!\nSaved to temporary folder.")
                 
         except Exception as e:
-            self.ai_output.setText(f"Error during OCR: {str(e)}")
+            self.ai_output.setText(f"Error during OCR: {str(e)}\n\nMake sure Ghostscript is properly installed in the 'ghostscript' folder.")
 
     #------FUNCTION FOR SUMMARIZE PDF WITH AI----------
     def summarize_pdf_function(self):
@@ -305,16 +334,16 @@ class PDFToolGUI(QMainWindow):
             self.ai_output.setText("Generating summary... Please wait.")
             QApplication.processEvents()  # Update UI
             
-            # Generate summary using the imported function
+            # Get summary 
             summary = generate_pdf_summary(text)
             
-            # Display the summary
+            # Show it
             self.ai_output.setText(summary)
             
         except Exception as e:
             self.ai_output.setText(f"Error generating summary: {str(e)}")
     
-    #------FUNCTION FOR ASK AI A QUESTION IN PDF----------
+    # Q&A function
     def ask_question_function(self):
         if not self.pdf_path:
             self.ai_output.setText("Error: No PDF selected")
@@ -329,7 +358,7 @@ class PDFToolGUI(QMainWindow):
         QApplication.processEvents()  # Update UI
         
         try:
-            # Extract text from current PDF
+            # Get text from PDF
             text = ""
             for page_num in range(self.total_pages):
                 page = self.doc[page_num]
